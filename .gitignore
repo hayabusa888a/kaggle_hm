@@ -205,3 +205,34 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+
+# データ（Gitに含めない）
+**/data/raw/
+**/data/processed/
+**/data/external/
+*.csv
+*.parquet
+*.feather
+*.zip
+
+# モデル
+**/outputs/models/
+*.pkl
+*.pth
+*.ckpt
+
+# 認証情報（絶対にGitに入れない）
+.env
+kaggle.json
+
+# Docker
+__pycache__/
+*.pyc
+
+# Mac用（将来のMac環境対策）
+.DS_Store
+
+# Windows用
+Thumbs.db

@@ -1,0 +1,9 @@
+services:
+  kaggle:
+    build: ./competitions/hm
+    volumes:
+      - ./competitions/hm:/workspace  # コードを同期
+    ports:
+      - "8888:8888"
+    env_file:
+      - ./competitions/hm/.env
