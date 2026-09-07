@@ -36,6 +36,12 @@ NEG_RATIO = 30.0
 BATCH = 150_000
 BPR_DIM = int(sys.argv[4]) if len(sys.argv) > 4 else 64
 BPR_ITERS = int(sys.argv[5]) if len(sys.argv) > 5 else 100
+# LightGBM のパラメータ。実験17で既定値と組んでも再現できることを確認した値。
+#   現行 lr=0.05/leaves=63      -> 0.04053
+#   optuna_t3 lr=0.0188/leaves=188 -> 0.04128 (+0.00075)
+LGB_LR = float(sys.argv[6]) if len(sys.argv) > 6 else 0.05
+LGB_LEAVES = int(sys.argv[7]) if len(sys.argv) > 7 else 63
+LGB_ROUNDS = int(sys.argv[8]) if len(sys.argv) > 8 else 300
 
 trans, customers, articles = load_converted()
 maps = load_maps()
@@ -43,8 +49,8 @@ article_rev = maps['article_id_reverse']
 N_ITEMS = int(articles['article_id'].max()) + 1
 
 cuts = [SUB_CUTOFF - timedelta(days=7 * i) for i in range(1, N_WEEKS + 1)]
-print('設定: 学習{}週 top_k={} BPR(dim={}, iters={})'.format(
-    N_WEEKS, TOP_K, BPR_DIM, BPR_ITERS), flush=True)
+print('設定: 学習{}週 top_k={} BPR(dim={}, iters={}) LGB(lr={}, leaves={}, rounds={})'.format(
+    N_WEEKS, TOP_K, BPR_DIM, BPR_ITERS, LGB_LR, LGB_LEAVES, LGB_ROUNDS), flush=True)
 print('学習週: ' + ', '.join(str(c) for c in cuts), flush=True)
 
 parts = []
@@ -67,7 +73,10 @@ gc.collect()
 
 cols = feature_columns(train)
 with timer() as t:
-    model, _ = train_lgb_binary(train, cols, categorical=[])
+    model, _ = train_lgb_binary(
+        train, cols, categorical=[],
+        params={'learning_rate': LGB_LR, 'num_leaves': LGB_LEAVES},
+        num_boost_round=LGB_ROUNDS)
 print('学習完了 {:,}行 正例{:,} ({:.0f}s)'.format(
     len(train), train['label'].sum(), t()), flush=True)
 del train

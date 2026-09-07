@@ -35,8 +35,9 @@ from hm.embeddings import add_bpr_similarity, add_user2item_similarity
 from hm.rerank import train_lgb_binary, predict
 
 N_WEEKS = int(sys.argv[1]) if len(sys.argv) > 1 else 2
-TOP_K = 100
-BPR_DIM = 64
+TOP_K = int(sys.argv[2]) if len(sys.argv) > 2 else 200
+BPR_DIM = int(sys.argv[3]) if len(sys.argv) > 3 else 128
+BPR_ITERS = int(sys.argv[4]) if len(sys.argv) > 4 else 300
 VALID = VALID_CUTOFF
 CUTS = [VALID - timedelta(days=7 * i) for i in range(1, N_WEEKS + 1)]
 
@@ -55,13 +56,17 @@ va = get_actuals(trans, VALID)
 def load(cutoff, tag):
     df = pl.read_parquet(dataset_path(cutoff, TOP_K, tag))
     df = add_user2item_similarity(df, trans, cutoff, n_items)
-    return add_bpr_similarity(df, trans, cutoff, n_items, dim=BPR_DIM)
+    return add_bpr_similarity(df, trans, cutoff, n_items, dim=BPR_DIM,
+                              iterations=BPR_ITERS)
 
 valid = load(VALID, 'valid')
 cols = feature_columns(valid)
 train = pl.concat([load(c, 'train_neg30').select(cols + ['label']) for c in CUTS],
                   how='vertical')
+print('設定: 学習{}週 top_k={} BPR(dim={}, iters={})'.format(
+    N_WEEKS, TOP_K, BPR_DIM, BPR_ITERS), flush=True)
 print('train {:,}行 / valid {:,}行'.format(len(train), len(valid)), flush=True)
+# 比較基準（同条件の単一モデル）: k200 x BPR(128,300) x 学習2週 = 0.04081
 
 print("\n{:<28}{:>9}{:>10}{:>7}".format('model', 'R@12', 'MAP@12', 'sec'), flush=True)
 scores = []
