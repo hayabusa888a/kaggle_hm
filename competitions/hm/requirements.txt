@@ -8,3 +8,9 @@ xgboost
 jupyterlab
 kaggle
 python-dotenv
+polars
+pyarrow
+catboost
+scipy
+tqdm
+implicit

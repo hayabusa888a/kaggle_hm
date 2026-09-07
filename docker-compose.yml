@@ -1,9 +1,21 @@
 services:
   kaggle:
-    build: ./competitions/hm
+    image: rapidsai/notebooks:26.04-cuda12-py3.12
     volumes:
-      - ./competitions/hm:/workspace  # コードを同期
+      - ./competitions/hm:/workspace
     ports:
       - "8888:8888"
     env_file:
       - ./competitions/hm/.env
+    deploy:
+      resources:
+        limits:
+          cpus: '20'
+          memory: 24G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - EXTRA_PIP_PACKAGES=catboost lightgbm xgboost kaggle python-dotenv tqdm
