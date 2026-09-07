@@ -236,3 +236,18 @@ __pycache__/
 
 # Windows用
 Thumbs.db
+# ------------------------------------------------------------------
+# H&M: 中間生成物。すべて src/hm から再生成できるので Git には入れない
+# ------------------------------------------------------------------
+# 候補生成の出力（8.7GB）、第2段のデータセット、埋め込み、提出ファイル
+**/outputs/candidates/
+**/outputs/features/
+**/outputs/converted/
+**/outputs/submissions/
+*.npy
+*.err
+# CatBoost が実行時に吐く作業ディレクトリ
+**/catboost_info/
+
+# 実験ログだけは記録として残す（*.csv の除外を打ち消す）
+!competitions/hm/outputs/experiments/experiment_log.csv
