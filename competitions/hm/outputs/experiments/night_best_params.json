@@ -1,0 +1,16 @@
+{
+  "params": {
+    "learning_rate": 0.010200319021063563,
+    "num_leaves": 134,
+    "min_data_in_leaf": 200,
+    "feature_fraction": 0.80956048815762,
+    "bagging_fraction": 0.5468298316752537,
+    "bagging_freq": 1,
+    "lambda_l1": 2.3283784289517373e-06,
+    "lambda_l2": 0.20578650008984964,
+    "min_gain_to_split": 0.37522678621398475
+  },
+  "rounds": 1200,
+  "map": 0.04151660343424801,
+  "source": "night_A trial 19"
+}

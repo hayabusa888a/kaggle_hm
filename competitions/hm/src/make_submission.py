@@ -17,6 +17,8 @@ import gc
 import sys
 from datetime import timedelta
 
+from pathlib import Path
+
 import polars as pl
 
 from hm.config import SUB_CUTOFF, SUBMISSION_DIR, DATA_DIR, load_converted, load_maps
@@ -39,9 +41,24 @@ BPR_ITERS = int(sys.argv[5]) if len(sys.argv) > 5 else 100
 # LightGBM のパラメータ。実験17で既定値と組んでも再現できることを確認した値。
 #   現行 lr=0.05/leaves=63      -> 0.04053
 #   optuna_t3 lr=0.0188/leaves=188 -> 0.04128 (+0.00075)
-LGB_LR = float(sys.argv[6]) if len(sys.argv) > 6 else 0.05
-LGB_LEAVES = int(sys.argv[7]) if len(sys.argv) > 7 else 63
-LGB_ROUNDS = int(sys.argv[8]) if len(sys.argv) > 8 else 300
+# 引数6番目に JSON パスを渡すと、そこに書かれた**全パラメータ**を使う。
+# lr/leaves/rounds だけを個別に渡す旧方式も残すが、Optuna の結果を反映するときは
+# 必ず JSON を使うこと。3つだけ渡して他を既定値にすると、探索で効いていた
+# bagging_fraction や正則化が落ちる（夜間実行でこの取りこぼしが実際に起きた）。
+LGB_PARAMS: dict = {}
+LGB_ROUNDS = 300
+if len(sys.argv) > 6 and sys.argv[6].endswith('.json'):
+    import json as _json
+    _d = _json.loads(Path(sys.argv[6]).read_text(encoding='utf-8'))
+    LGB_PARAMS = dict(_d.get('params', {}))
+    LGB_ROUNDS = int(_d.get('rounds', 300))
+elif len(sys.argv) > 6:
+    LGB_PARAMS = {'learning_rate': float(sys.argv[6])}
+    if len(sys.argv) > 7:
+        LGB_PARAMS['num_leaves'] = int(sys.argv[7])
+    LGB_ROUNDS = int(sys.argv[8]) if len(sys.argv) > 8 else 300
+else:
+    LGB_PARAMS = {'learning_rate': 0.05, 'num_leaves': 63}
 
 trans, customers, articles = load_converted()
 maps = load_maps()
@@ -49,8 +66,9 @@ article_rev = maps['article_id_reverse']
 N_ITEMS = int(articles['article_id'].max()) + 1
 
 cuts = [SUB_CUTOFF - timedelta(days=7 * i) for i in range(1, N_WEEKS + 1)]
-print('設定: 学習{}週 top_k={} BPR(dim={}, iters={}) LGB(lr={}, leaves={}, rounds={})'.format(
-    N_WEEKS, TOP_K, BPR_DIM, BPR_ITERS, LGB_LR, LGB_LEAVES, LGB_ROUNDS), flush=True)
+print('設定: 学習{}週 top_k={} BPR(dim={}, iters={}) rounds={}'.format(
+    N_WEEKS, TOP_K, BPR_DIM, BPR_ITERS, LGB_ROUNDS), flush=True)
+print('LGBパラメータ: {}'.format(LGB_PARAMS), flush=True)
 print('学習週: ' + ', '.join(str(c) for c in cuts), flush=True)
 
 parts = []
@@ -73,10 +91,8 @@ gc.collect()
 
 cols = feature_columns(train)
 with timer() as t:
-    model, _ = train_lgb_binary(
-        train, cols, categorical=[],
-        params={'learning_rate': LGB_LR, 'num_leaves': LGB_LEAVES},
-        num_boost_round=LGB_ROUNDS)
+    model, _ = train_lgb_binary(train, cols, categorical=[], params=LGB_PARAMS,
+                                num_boost_round=LGB_ROUNDS)
 print('学習完了 {:,}行 正例{:,} ({:.0f}s)'.format(
     len(train), train['label'].sum(), t()), flush=True)
 del train
