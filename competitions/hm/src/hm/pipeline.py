@@ -15,6 +15,17 @@ from . import candidates as C
 from . import features as F
 from .combine import combine
 
+# 6位の u2tag2i。tag=product_code は same_product_code として別に持っている。
+# 候補生成は build_candidates.py から使えるよう残すが、**既定の結合には入れない**。
+#   実験21: 3属性を足すとプール上限は 0.2689 -> 0.3047（+0.0358）と上がるが、
+#           候補段階の MAP@12 が 0.02433 -> 0.01961 に落ち、
+#           再rank後も 0.04153 -> 0.04128（-0.00025）と悪化した。
+#   実験22: 上限を 5 まで絞っても MAP@12 は 0.02125 までしか戻らない。
+#           候補が1.6件/人しか増えなくても落ちるので、押し出しの量ではなく
+#           min-max正規化後のスコアが既存戦略の相対順位を崩しているのが原因。
+#   -> 等重み結合のままでは使えない。重み最適化を入れるなら再検討の価値あり。
+U2TAG_TAGS = ['section_no', 'department_no', 'product_type_no']
+
 PER_CUSTOMER = ['repurchase', 'timedecay', 'same_product_code', 'purchase_interval',
                 'user_cf', 'also_bought', 'item2item_cf']
 KEYED = {'popular': 'dummy', 'popular_by_age': 'age_bin', 'popular_by_channel': 'sales_channel_id'}
@@ -36,6 +47,8 @@ def build_sources(transactions: pl.DataFrame, customers: pl.DataFrame, articles:
         'user_cf': lambda: C.build_user_cf(transactions, cutoff, top_n),
         'also_bought': lambda: C.build_also_bought(transactions, cutoff, top_n),
         'item2item_cf': lambda: C.build_item2item_cf(transactions, cutoff, top_n),
+        **{f'u2tag_{t}': (lambda t=t: C.build_u2tag2i(
+            transactions, articles, cutoff, t, top_n)) for t in U2TAG_TAGS},
         'popular': lambda: C.build_popular(transactions, cutoff, top_n),
         'popular_by_age': lambda: C.build_popular_by_age(transactions, customers, cutoff, top_n),
         'popular_by_channel': lambda: C.build_popular_by_channel(transactions, cutoff, top_n),
@@ -81,6 +94,7 @@ def build_dataset(transactions: pl.DataFrame, customers: pl.DataFrame, articles:
                   with_meta: bool = True,
                   customer_filter: pl.Series | None = None,
                   sample_fn=None, n_chunks: int = 1,
+                  weights: dict | None = None,
                   add_u2i: bool = False, n_items: int | None = None,
                   add_salesfc: bool = False,
                   cache_tag: str | None = None) -> pl.DataFrame:
@@ -99,7 +113,7 @@ def build_dataset(transactions: pl.DataFrame, customers: pl.DataFrame, articles:
 
     sources = build_sources(transactions, customers, articles, cutoff, top_n,
                             strategies, customer_filter)
-    ds = combine(sources, top_k=top_k, with_meta=with_meta)
+    ds = combine(sources, weights=weights, top_k=top_k, with_meta=with_meta)
     if actuals is not None:
         ds = attach_labels(ds, actuals)
     if sample_fn is not None:

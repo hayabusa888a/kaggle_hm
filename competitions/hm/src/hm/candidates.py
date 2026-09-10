@@ -344,3 +344,68 @@ def build_item2item_cf(transactions: pl.DataFrame, cutoff: date, top_n: int = 10
              .with_columns((pl.int_range(pl.len()).over('article_id') + 1).alias('r'))
              .filter(pl.col('r') <= pair_top).drop('r'))
     return _apply_i2i(pairs, transactions, cutoff, history_days, top_n, 'item2item_cf')
+
+
+# ------------------------------------------------- u2tag2i（属性経由の個人化人気）
+
+def build_u2tag2i(transactions: pl.DataFrame, articles: pl.DataFrame, cutoff: date,
+                  tag: str, top_n: int = 100, history_days: int = 90,
+                  recent_days: int = 14, pop_top: int = 60, n_chunks: int = 8,
+                  exclude_purchased: bool = True, cache: bool = True) -> pl.DataFrame:
+    """顧客が買った属性 -> その属性の中で売れている商品、という経路の候補。
+
+    6位の4本柱のひとつ:
+      "u2tag2i: tag can be product_code, product_type_no, department_no, section_no"
+    11位も同じ発想を書いている:
+      "category-wise popular items: list the popular items for each department_no,
+       add them if the customer has bought the item with the same department_no"
+
+    popular_by_age などが「年齢層で人気」なのに対し、これは**その顧客自身が買った
+    属性**を使うので個人化の粒度が違う。実験10の診断で、取りこぼしの72%が
+    「商品はプールにあるのにその顧客に紐付かない」ケースだったので、
+    顧客->商品の経路を増やすこの形が効くはず。
+
+    スコア = 顧客がその属性を買う割合 x その属性内での商品の直近売上
+      商品は各属性列で値を1つしか持たないので二重計上にならない。
+      前半が個人化、後半が属性内の人気度を担う。
+    """
+    name = f'u2tag_{tag}'
+    if cache and (c := load_cached(name, cutoff, top_n)) is not None:
+        return c
+
+    art_tag = articles.select(['article_id', tag]).drop_nulls(tag)
+
+    # 顧客側: どの属性をどれだけ買っているか（割合）
+    hist = _hist(transactions, cutoff, history_days).join(art_tag, on='article_id', how='inner')
+    totals = hist.group_by('customer_id').agg(pl.len().alias('_total'))
+    user_tag = (hist.group_by(['customer_id', tag]).agg(pl.len().alias('_n'))
+                .join(totals, on='customer_id', how='left')
+                .with_columns((pl.col('_n') / pl.col('_total')).alias('ratio'))
+                .select(['customer_id', tag, 'ratio']))
+
+    # 商品側: 属性ごとの直近売れ筋 top pop_top
+    pop = (_hist(transactions, cutoff, recent_days)
+           .join(art_tag, on='article_id', how='inner')
+           .group_by([tag, 'article_id']).agg(pl.len().cast(pl.Float64).alias('sales')))
+    pop = (pop.sort([tag, 'sales', 'article_id'], descending=[False, True, False])
+           .with_columns((pl.int_range(pl.len()).over(tag) + 1).alias('_r'))
+           .filter(pl.col('_r') <= pop_top).drop('_r'))
+
+    # (顧客 x 属性) x (属性 x 商品) は数億行になるので顧客チャンクに割る
+    parts = []
+    for i in range(n_chunks):
+        parts.append(
+            user_tag.filter(pl.col('customer_id') % n_chunks == i)
+            .join(pop, on=tag, how='inner')
+            .select(['customer_id', 'article_id',
+                     (pl.col('ratio') * pl.col('sales')).alias('score')])
+            .group_by(['customer_id', 'article_id']).agg(pl.col('score').max()))
+    res = pl.concat(parts)
+
+    if exclude_purchased:
+        # 既購入は repurchase が押さえているので、その枠を新規商品に回す
+        owned = (_hist(transactions, cutoff).select(['customer_id', 'article_id'])
+                 .unique().with_columns(pl.lit(True).alias('_owned')))
+        res = (res.join(owned, on=['customer_id', 'article_id'], how='left')
+               .filter(pl.col('_owned').is_null()).drop('_owned'))
+    return _finish(res, name, cutoff, top_n)

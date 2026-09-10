@@ -14,7 +14,7 @@ import polars as pl
 from hm.config import load_converted
 from hm.exp_log import timer
 import hm.candidates as C
-from hm.pipeline import ALL_STRATEGIES
+from hm.pipeline import ALL_STRATEGIES, U2TAG_TAGS
 
 cutoff = date.fromisoformat(sys.argv[1])
 wanted = sys.argv[2:] or ALL_STRATEGIES
@@ -33,11 +33,15 @@ builders = {
     'popular_by_age': lambda: C.build_popular_by_age(trans, customers, cutoff, TOP_N),
     'popular_by_channel': lambda: C.build_popular_by_channel(trans, cutoff, TOP_N),
 }
+# 6位の u2tag2i。属性ごとに1戦略として登録する。
+for _t in U2TAG_TAGS:
+    builders[f'u2tag_{_t}'] = (
+        lambda t=_t: C.build_u2tag2i(trans, articles, cutoff, t, TOP_N))
 
 for name in wanted:
     if C.load_cached(name, cutoff, TOP_N) is not None:
-        print(f'{name:<20} cached', flush=True)
+        print('{:<24} cached'.format(name), flush=True)
         continue
     with timer() as t:
         df = builders[name]()
-    print(f'{name:<20} {len(df):>12,}行  {t():>6.1f}s', flush=True)
+    print('{:<24}{:>13,}行  {:>6.1f}s'.format(name, len(df), t()), flush=True)

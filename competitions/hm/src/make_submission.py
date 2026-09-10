@@ -17,6 +17,7 @@ import gc
 import sys
 from datetime import timedelta
 
+import os
 from pathlib import Path
 
 import polars as pl
@@ -36,6 +37,14 @@ N_WEEKS = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 TOP_K = int(sys.argv[3]) if len(sys.argv) > 3 else 100
 NEG_RATIO = 30.0
 BATCH = 150_000
+# 候補結合の重み。JSON を渡さなければ全戦略1.0（等重み）。
+# 実験24: Optuna最適化した重みで再rank MAP@12 が 0.04157 -> 0.04181（+0.00024）。
+WEIGHTS_PATH = os.environ.get('HM_WEIGHTS')
+LGB_WEIGHTS = None
+if WEIGHTS_PATH:
+    import json as _j
+    LGB_WEIGHTS = _j.loads(Path(WEIGHTS_PATH).read_text(encoding='utf-8'))['weights']
+
 BPR_DIM = int(sys.argv[4]) if len(sys.argv) > 4 else 64
 BPR_ITERS = int(sys.argv[5]) if len(sys.argv) > 5 else 100
 # LightGBM のパラメータ。実験17で既定値と組んでも再現できることを確認した値。
@@ -69,6 +78,8 @@ cuts = [SUB_CUTOFF - timedelta(days=7 * i) for i in range(1, N_WEEKS + 1)]
 print('設定: 学習{}週 top_k={} BPR(dim={}, iters={}) rounds={}'.format(
     N_WEEKS, TOP_K, BPR_DIM, BPR_ITERS, LGB_ROUNDS), flush=True)
 print('LGBパラメータ: {}'.format(LGB_PARAMS), flush=True)
+print('候補重み: {}'.format('等重み' if LGB_WEIGHTS is None else
+      {k: round(v, 3) for k, v in LGB_WEIGHTS.items()}), flush=True)
 print('学習週: ' + ', '.join(str(c) for c in cuts), flush=True)
 
 parts = []
@@ -78,7 +89,8 @@ for c in cuts:
         trans, customers, articles, c, actuals=a, top_k=TOP_K,
         customer_filter=pl.Series('customer_id', list(a.keys()), dtype=pl.Int32),
         sample_fn=lambda d: downsample_negatives(d, NEG_RATIO),
-        n_chunks=4, cache_tag='train_neg30')
+        n_chunks=4, weights=LGB_WEIGHTS,
+        cache_tag=None if LGB_WEIGHTS else 'train_neg30')
     # user2item 類似度。実験11で +bpr+svd が最良（base 0.03673 -> 0.03986）。
     # 埋め込みはその週(cutoff)以前のデータだけで学習する。
     d = add_user2item_similarity(d, trans, c, N_ITEMS)
@@ -109,7 +121,7 @@ for i in range(0, len(all_ids), BATCH):
     ids = pl.Series('customer_id', all_ids[i:i + BATCH], dtype=pl.Int32)
     srcs = build_sources(trans, customers, articles, SUB_CUTOFF, 100,
                          customer_filter=ids, build_missing=False)
-    cand = combine(srcs, top_k=TOP_K)
+    cand = combine(srcs, weights=LGB_WEIGHTS, top_k=TOP_K)
     del srcs
     gc.collect()
     ds = F.build_all_features(cand, trans, articles, customers, SUB_CUTOFF, n_chunks=2)
