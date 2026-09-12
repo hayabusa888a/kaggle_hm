@@ -18,6 +18,9 @@ import polars as pl
 # その戦略で拾われなかったことを表す番兵。欠損のままだと木が「無い」を学習できない。
 MISSING_RANK = 999
 
+# 順位だけでなくスコアの生値も第2段に渡す戦略
+SCORE_PASSTHROUGH = ('item2item_cf', 'also_bought', 'user_cf')
+
 
 def _normalize(df: pl.DataFrame) -> pl.DataFrame:
     """顧客ごとに score を min-max 正規化する。戦略ごとにスケールが違うため。"""
@@ -67,6 +70,16 @@ def combine(sources: dict[str, pl.DataFrame],
                             pl.col(f'rank_{name}').is_not_null().cast(pl.Int8).alias(f'in_{name}'),
                             pl.col(f'rank_{name}').fill_null(MISSING_RANK),
                         ]))
+        # 類似度そのものを渡す戦略。順位だけだと「どれくらい似ているか」が落ちる。
+        # i2i は類似度、also_bought は共起の強さで、値の大小に意味がある。
+        for name in SCORE_PASSTHROUGH:
+            if name not in sources:
+                continue
+            s = (sources[name].select(['customer_id', 'article_id',
+                                       pl.col('score').cast(pl.Float32).alias(f'score_{name}')])
+                 .unique(subset=['customer_id', 'article_id']))
+            combined = (combined.join(s, on=['customer_id', 'article_id'], how='left')
+                        .with_columns(pl.col(f'score_{name}').fill_null(0.0)))
 
     combined = combined.sort(
         ['customer_id', 'candidate_score', 'article_id'], descending=[False, True, False]

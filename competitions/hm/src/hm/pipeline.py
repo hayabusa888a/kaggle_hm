@@ -96,7 +96,7 @@ def build_dataset(transactions: pl.DataFrame, customers: pl.DataFrame, articles:
                   sample_fn=None, n_chunks: int = 1,
                   weights: dict | None = None,
                   add_u2i: bool = False, n_items: int | None = None,
-                  add_salesfc: bool = False,
+                  add_salesfc: bool = False, add_extra: bool = True,
                   cache_tag: str | None = None) -> pl.DataFrame:
     """候補生成 -> 結合(+メタ特徴) -> ラベル付与 -> (間引き) -> 特徴量付与。
 
@@ -120,6 +120,10 @@ def build_dataset(transactions: pl.DataFrame, customers: pl.DataFrame, articles:
         ds = sample_fn(ds)
     ds = F.build_all_features(ds, transactions, articles, customers, cutoff,
                               n_chunks=n_chunks)
+    if add_extra:
+        # 色・購買周期・同一product_code・未購買カテゴリ系（features_extra）
+        from .features_extra import add_all_extra
+        ds = add_all_extra(ds, transactions, articles, cutoff)
     if add_salesfc:
         # 10位の来週売上予測。cutoff 時点で観測済みの週ペアだけで学習した予測器を使う。
         from .sales_forecast import add_sales_forecast
