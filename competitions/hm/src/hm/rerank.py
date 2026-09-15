@@ -113,3 +113,47 @@ def predict(model, df: pl.DataFrame, feature_cols: list[str],
         del x
         gc.collect()
     return df.with_columns(pl.Series('pred_score', out))
+
+
+def train_lgb_ranker(train: pl.DataFrame, feature_cols: list[str],
+                     params: dict | None = None, num_boost_round: int = 796,
+                     label_gain: list[float] | None = None,
+                     seed: int = 42):
+    """LightGBM lambdarank。顧客を1グループとして順位を直接最適化する。
+
+    6位が公開しているモデル比較表では、同じ LightGBM なら lambdarank が
+    binary を上回っている:
+      lightgbm binary     220候補 -> cv 0.0396
+      lightgbm lambdarank 220候補 -> cv 0.0400
+    （本文の「binary優勢」は CatBoost binary が最良という意味で、
+      LightGBM 内では lambdarank のほうが良かった）
+    ただし候補1000件では 0.0381 と崩れており、候補が多いと不利。
+
+    binary との違いは、損失が「この行が正解か」ではなく
+    「同じ顧客の中でこの行を何位に置くか」になること。MAP@12 に近い。
+
+    **group は customer_id ごとの行数。train は customer_id でソートしておく必要がある。**
+    ソートが崩れているとグループ境界がずれて学習が壊れるので、ここで必ずソートする。
+    """
+    import lightgbm as lgb
+
+    p = {
+        'objective': 'lambdarank', 'metric': 'map', 'eval_at': [12],
+        'learning_rate': 0.0188, 'num_leaves': 188, 'min_data_in_leaf': 100,
+        'feature_fraction': 0.8, 'bagging_fraction': 0.8, 'bagging_freq': 1,
+        # 上位だけを見て学習する。MAP@12 が目的なので深い順位は捨ててよい。
+        'lambdarank_truncation_level': 30,
+        'verbosity': -1, 'num_threads': 0, 'seed': seed,
+    }
+    p.update(params or {})
+
+    sorted_train = train.sort('customer_id')
+    group = (sorted_train.group_by('customer_id', maintain_order=True)
+             .agg(pl.len().alias('n'))['n'].to_numpy())
+    x = to_matrix(sorted_train, feature_cols)
+    y = sorted_train['label'].to_numpy()
+    ds = lgb.Dataset(x, label=y, group=group, feature_name=feature_cols,
+                     free_raw_data=True)
+    if label_gain is not None:
+        p['label_gain'] = label_gain
+    return lgb.train(p, ds, num_boost_round=num_boost_round), []
